@@ -508,7 +508,11 @@ def test_compose_with_keypoint_noop_label_outside(keypoints, keypoint_format: st
     transformed = aug(image=image, keypoints=keypoints, **labels)
 
     np.testing.assert_array_equal(transformed["image"], image)
-    np.testing.assert_allclose(transformed["keypoints"], keypoints)
+    # Handle comparison when input is empty list vs output is empty array with shape
+    if len(keypoints) == 0:
+        assert len(transformed["keypoints"]) == 0
+    else:
+        np.testing.assert_allclose(transformed["keypoints"], keypoints)
 
     for k, v in labels.items():
         assert transformed[k] == v
