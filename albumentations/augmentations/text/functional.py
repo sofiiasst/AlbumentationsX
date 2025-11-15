@@ -5,8 +5,6 @@ rendering text onto images. Includes functions for word manipulation, text drawi
 and handling text regions in images.
 """
 
-from __future__ import annotations
-
 import random
 from typing import TYPE_CHECKING, Any
 
@@ -20,9 +18,16 @@ from albucore import (
 
 from albumentations.core.type_definitions import PAIR
 
-# Importing wordnet and other dependencies only for type checking
 if TYPE_CHECKING:
     from PIL import Image
+
+# Optional dependencies
+try:
+    from PIL import Image
+
+    _PIL_AVAILABLE = True
+except ImportError:
+    _PIL_AVAILABLE = False
 
 
 def delete_random_words(words: list[str], num_words: int, py_random: random.Random) -> str:
@@ -107,7 +112,7 @@ def insert_random_stopwords(
     return " ".join(words)
 
 
-def convert_image_to_pil(image: np.ndarray) -> Image:
+def convert_image_to_pil(image: np.ndarray) -> "Image":
     """Convert a NumPy array image to a PIL image."""
     try:
         from PIL import Image
@@ -123,7 +128,7 @@ def convert_image_to_pil(image: np.ndarray) -> Image:
     raise TypeError(f"Unsupported image shape: {image.shape}")
 
 
-def draw_text_on_pil_image(pil_image: Image, metadata_list: list[dict[str, Any]]) -> Image:
+def draw_text_on_pil_image(pil_image: "Image", metadata_list: list[dict[str, Any]]) -> "Image":
     """Draw text on a PIL image."""
     try:
         from PIL import ImageDraw
