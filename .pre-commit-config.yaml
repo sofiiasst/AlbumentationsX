@@ -75,9 +75,14 @@ repos:
         name: Check albucore version
         entry: python ./tools/check_albucore_version.py
         language: system
-        files: setup.py
+        files: pyproject.toml
+      - id: check-conda-dependencies
+        name: Check conda dependencies match pyproject.toml
+        entry: python ./tools/check_conda_dependencies.py
+        language: system
+        files: ^(pyproject\.toml|conda\.recipe/meta\.yaml)$
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.9
+    rev: v0.14.11
     hooks:
       - id: ruff
         exclude: '__pycache__/'
@@ -100,10 +105,6 @@ repos:
     rev: v0.47.0
     hooks:
       - id: markdownlint
-  - repo: https://github.com/tox-dev/pyproject-fmt
-    rev: "v2.11.1"
-    hooks:
-      - id: pyproject-fmt
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.19.1
     hooks:
