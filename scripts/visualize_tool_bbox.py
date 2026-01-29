@@ -7,8 +7,8 @@ from pathlib import Path
 def visualize_tool_bbox():
     """Draw bbox on the original tool image."""
     repo_root = Path(__file__).resolve().parent.parent
-    tool_path = repo_root / "tools/1.png"
-    bbox_path = repo_root / "tools/bbox.json"
+    tool_path = repo_root / "tools/hammer/2.png"
+    bbox_path = repo_root / "tools/hammer/bbox2.json"
 
     if not tool_path.exists():
         print(f"Tool image not found: {tool_path}")

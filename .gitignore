@@ -168,3 +168,6 @@ conda_build/
 data/
 
 notebooks/
+
+
+/outputs/*

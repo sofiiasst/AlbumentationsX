@@ -33,14 +33,11 @@ def paste_foreground(fg_rgba: np.ndarray, bg_rgb: np.ndarray, tool_bbox: dict, r
     
     # Optional: rotate the tool before pasting
     if rotate_tool:
-        angle = random.uniform(-45, 45)
-        h, w = fg_rgba.shape[:2]
-        center = (w // 2, h // 2)
-        
-        # Rotate with OpenCV (keeps original size, crops edges)
-        M = cv2.getRotationMatrix2D(center, angle, 1.0)
-        fg_rgba = cv2.warpAffine(fg_rgba, M, (w, h), flags=cv2.INTER_LINEAR, 
-                                  borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
+        fg_rgba = A.Rotate(
+            limit=15,
+            border_mode=cv2.BORDER_CONSTANT,
+            p=1.0
+        )(image=fg_rgba)["image"]
         
         # Compute bbox from actual opaque pixels (threshold alpha > 128 to ignore semi-transparent edges)
         alpha_channel = fg_rgba[:, :, 3]
@@ -86,6 +83,10 @@ def paste_foreground(fg_rgba: np.ndarray, bg_rgb: np.ndarray, tool_bbox: dict, r
     bbox_y = int(tool_bbox["y"] * scale_factor) + y
     bbox_w = int(tool_bbox["width"] * scale_factor)
     bbox_h = int(tool_bbox["height"] * scale_factor)
+    
+    # Skip if bbox is too small
+    if bbox_w < 5 or bbox_h < 5:
+        return None, None
 
     # Get final image dimensions (BEFORE augmentation)
     img_h, img_w = bg_rgb.shape[:2]
@@ -115,9 +116,8 @@ def paste_foreground(fg_rgba: np.ndarray, bg_rgb: np.ndarray, tool_bbox: dict, r
 
 def main():
     repo_root = Path(__file__).resolve().parent.parent
-    fg_path = repo_root / "tools/1.png"
-    bg_path = find_image(repo_root / "data/backgrounds", "background_1")
-    bbox_path = repo_root / "tools/bbox.json"
+    fg_path = repo_root / "tools/hammer/1.png"
+    bbox_path = repo_root / "tools/hammer/bbox.json"
 
     # Load original tool bbox
     if not bbox_path.exists():
@@ -143,9 +143,18 @@ def main():
     }
 
     fg_rgba = load_foreground(fg_path)
-    bg_bgr = cv2.imread(str(bg_path), cv2.IMREAD_COLOR)
-    if bg_bgr is None:
-        raise FileNotFoundError(f"Background not found: {bg_path}")
+    
+    # Load both backgrounds
+    bg_path_1 = find_image(repo_root / "data/backgrounds", "background_1")
+    bg_path_2 = find_image(repo_root / "data/backgrounds", "background_2")
+    
+    bg_bgr_1 = cv2.imread(str(bg_path_1), cv2.IMREAD_COLOR)
+    bg_bgr_2 = cv2.imread(str(bg_path_2), cv2.IMREAD_COLOR)
+    
+    if bg_bgr_1 is None:
+        raise FileNotFoundError(f"Background not found: {bg_path_1}")
+    if bg_bgr_2 is None:
+        raise FileNotFoundError(f"Background not found: {bg_path_2}")
 
     transform = A.Compose(
         [
@@ -154,7 +163,7 @@ def main():
             A.GaussianBlur(p=0.2),
             A.HorizontalFlip(p=0.5),
         ],
-        bbox_params=A.BboxParams(format="pascal_voc", label_fields=["class_labels"], min_visibility=0.01),
+        bbox_params=A.BboxParams(format="pascal_voc", label_fields=["class_labels"], min_visibility=0.3),
     )
 
     # Find next available run number
@@ -179,8 +188,13 @@ def main():
 
     num_images = 30
     for i in range(num_images):
+        # Use background_1 for first 15 images, background_2 for next 15
+        bg_bgr = bg_bgr_1 if i < 15 else bg_bgr_2
         bg_rgb = cv2.cvtColor(bg_bgr, cv2.COLOR_BGR2RGB).copy()
         composed, bbox = paste_foreground(fg_rgba, bg_rgb, tool_bbox)
+        
+        if composed is None:
+            continue
 
         # Prepare bbox for Albumentations (pascal_voc)
         bboxes = [[bbox["x_min"], bbox["y_min"], bbox["x_max"], bbox["y_max"]]]
