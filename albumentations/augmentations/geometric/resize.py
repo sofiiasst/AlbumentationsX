@@ -50,6 +50,9 @@ class RandomScale(DualTransform):
     Image types:
         uint8, float32
 
+    Supported bboxes:
+        hbb
+
     Note:
         - The output image size is different from the input image size.
         - Scale factor is sampled independently per image side (width and height).
@@ -322,7 +325,7 @@ class MaxSizeTransform(DualTransform):
     _targets = ALL_TARGETS
 
     class InitSchema(BaseTransformInitSchema):
-        max_size: int | list[int] | None
+        max_size: int | Sequence[int] | None
         max_size_hw: tuple[int | None, int | None] | None
         area_for_downscale: Literal["image", "image_mask"] | None
         interpolation: Literal[
@@ -473,6 +476,9 @@ class LongestMaxSize(MaxSizeTransform):
     Image types:
         uint8, float32
 
+
+    Supported bboxes:
+        hbb
     Note:
         - This transform scales images based on their longest side:
             * If the longest side is **smaller** than max_size: the image will be **upscaled** (scale > 1.0)
@@ -593,6 +599,9 @@ class SmallestMaxSize(MaxSizeTransform):
     Image types:
         uint8, float32
 
+
+    Supported bboxes:
+        hbb
     Note:
         - This transform scales images based on their smallest side:
             * If the smallest side is **smaller** than max_size: the image will be **upscaled** (scale > 1.0)
@@ -700,6 +709,9 @@ class Resize(DualTransform):
     Image types:
         uint8, float32
 
+
+    Supported bboxes:
+        hbb
     Examples:
         >>> import numpy as np
         >>> import albumentations as A

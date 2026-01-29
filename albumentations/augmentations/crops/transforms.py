@@ -17,9 +17,8 @@ from pydantic import AfterValidator, Field, model_validator
 from typing_extensions import Self
 
 from albumentations.augmentations.geometric import functional as fgeometric
-from albumentations.core.bbox_utils import denormalize_bboxes, normalize_bboxes, union_of_bboxes
+from albumentations.core.bbox_utils import BboxParams, denormalize_bboxes, normalize_bboxes, union_of_bboxes
 from albumentations.core.pydantic import (
-    OnePlusIntRangeType,
     ZeroOneRangeType,
     check_range_bounds,
     nondecreasing,
@@ -142,6 +141,7 @@ class BaseCrop(DualTransform):
     """
 
     _targets = ALL_TARGETS
+    _supported_bbox_types: frozenset[str] = frozenset({"hbb", "obb"})
 
     def apply(
         self,
@@ -157,7 +157,13 @@ class BaseCrop(DualTransform):
         crop_coords: tuple[int, int, int, int],
         **params: Any,
     ) -> np.ndarray:
-        return fcrops.crop_bboxes_by_coords(bboxes, crop_coords, params["shape"][:2])
+        # Get bbox_type from processor if available (when used via Compose)
+        # Default to "hbb" for backward compatibility when called directly
+        bbox_processor = self.processors.get("bboxes")
+        bbox_type: Literal["obb", "hbb"] = "hbb"
+        if bbox_processor is not None and isinstance(bbox_processor.params, BboxParams):
+            bbox_type = bbox_processor.params.bbox_type
+        return fcrops.crop_bboxes_by_coords(bboxes, crop_coords, params["shape"][:2], bbox_type)
 
     def apply_to_keypoints(
         self,
@@ -638,6 +644,9 @@ class RandomCrop(BaseCropAndPad):
     Image types:
         uint8, float32
 
+
+    Supported bboxes:
+        hbb, obb
     Note:
         If pad_if_needed is True and crop size exceeds image dimensions, the image will be padded
         before applying the random crop.
@@ -821,6 +830,9 @@ class CenterCrop(BaseCropAndPad):
     Image types:
         uint8, float32
 
+
+    Supported bboxes:
+        hbb, obb
     Note:
         - If pad_if_needed is False and crop size exceeds image dimensions, it will raise a CropSizeError.
         - If pad_if_needed is True and crop size exceeds image dimensions, the image will be padded.
@@ -1002,6 +1014,9 @@ class Crop(BaseCropAndPad):
     Image types:
         uint8, float32
 
+
+    Supported bboxes:
+        hbb, obb
     Note:
         - The crop coordinates are applied as follows: x_min <= x < x_max and y_min <= y < y_max.
         - If pad_if_needed is False and crop region extends beyond image boundaries, it will be clipped.
@@ -1224,6 +1239,9 @@ class CropNonEmptyMaskIfExists(BaseCrop):
     Image types:
         uint8, float32
 
+
+    Supported bboxes:
+        hbb, obb
     Note:
         - If a mask is provided, the transform will try to crop an area containing non-zero (or non-ignored) pixels.
         - If no suitable area is found in the mask or no mask is provided, it will perform a random crop.
@@ -1610,7 +1628,13 @@ class _BaseRandomSizedCrop(DualTransform):
         crop_coords: tuple[int, int, int, int],
         **params: Any,
     ) -> np.ndarray:
-        return fcrops.crop_bboxes_by_coords(bboxes, crop_coords, params["shape"])
+        # Get bbox_type from processor if available (when used via Compose)
+        # Default to "hbb" for backward compatibility when called directly
+        bbox_processor = self.processors.get("bboxes")
+        bbox_type: Literal["obb", "hbb"] = "hbb"
+        if bbox_processor is not None and isinstance(bbox_processor.params, BboxParams):
+            bbox_type = bbox_processor.params.bbox_type
+        return fcrops.crop_bboxes_by_coords(bboxes, crop_coords, params["shape"], bbox_type)
 
     def apply_to_keypoints(
         self,
@@ -1686,6 +1710,9 @@ class RandomSizedCrop(_BaseRandomSizedCrop):
     Image types:
         uint8, float32
 
+
+    Supported bboxes:
+        hbb, obb
     Note:
         - The crop size is randomly selected for each execution within the range specified by 'min_max_height'.
         - The aspect ratio of the crop is determined by the 'w2h_ratio' parameter.
@@ -1752,6 +1779,7 @@ class RandomSizedCrop(_BaseRandomSizedCrop):
     """
 
     _targets = ALL_TARGETS
+    _supported_bbox_types: frozenset[str] = frozenset({"hbb", "obb"})
 
     class InitSchema(BaseTransformInitSchema):
         interpolation: Literal[
@@ -1772,7 +1800,11 @@ class RandomSizedCrop(_BaseRandomSizedCrop):
             cv2.INTER_LANCZOS4,
             cv2.INTER_LINEAR_EXACT,
         ]
-        min_max_height: OnePlusIntRangeType
+        min_max_height: Annotated[
+            tuple[int, int],
+            AfterValidator(check_range_bounds(1, None)),
+            AfterValidator(nondecreasing),
+        ]
         w2h_ratio: Annotated[float, Field(gt=0)]
         size: Annotated[tuple[int, int], AfterValidator(check_range_bounds(1, None))]
         area_for_downscale: Literal["image", "image_mask"] | None
@@ -1868,6 +1900,9 @@ class RandomResizedCrop(_BaseRandomSizedCrop):
     Image types:
         uint8, float32
 
+
+    Supported bboxes:
+        hbb, obb
     Note:
         - This transform attempts to crop a random area with an aspect ratio and relative size
           specified by 'ratio' and 'scale' parameters. If it fails to find a suitable crop after
@@ -1938,6 +1973,7 @@ class RandomResizedCrop(_BaseRandomSizedCrop):
     """
 
     _targets = ALL_TARGETS
+    _supported_bbox_types: frozenset[str] = frozenset({"hbb", "obb"})
 
     class InitSchema(BaseTransformInitSchema):
         scale: Annotated[tuple[float, float], AfterValidator(check_range_bounds(0, 1)), AfterValidator(nondecreasing)]
@@ -2065,6 +2101,9 @@ class RandomCropNearBBox(BaseCrop):
     Image types:
         uint8, float32
 
+
+    Supported bboxes:
+        hbb, obb
     Examples:
         >>> aug = Compose([RandomCropNearBBox(max_part_shift=(0.1, 0.5), cropping_bbox_key='test_bbox')],
         >>>              bbox_params=BboxParams("pascal_voc"))
@@ -2158,6 +2197,9 @@ class BBoxSafeRandomCrop(BaseCrop):
     Image types:
         uint8, float32
 
+
+    Supported bboxes:
+        hbb, obb
     Raises:
         CropSizeError: If requested crop size exceeds image dimensions
 
@@ -2312,6 +2354,9 @@ class RandomSizedBBoxSafeCrop(BBoxSafeRandomCrop):
     Image types:
         uint8, float32
 
+
+    Supported bboxes:
+        hbb, obb
     Note:
         - This transform ensures that all bounding boxes in the original image are fully contained within the
           cropped area. If it's not possible to find such a crop (e.g., when bounding boxes are too spread out),
@@ -2526,7 +2571,7 @@ class CropAndPad(DualTransform):
             - If int: crop/pad all sides by this value.
             - If tuple of 2 ints: crop/pad by (top/bottom, left/right).
             - If tuple of 4 ints: crop/pad by (top, right, bottom, left).
-            - Each int can also be a tuple of 2 ints for a range, or a list of ints for discrete choices.
+            - Each int can also be a tuple of 2 ints for a range.
             Default: None.
 
         percent (float, tuple of float, tuple of tuples of float, or None):
@@ -2535,7 +2580,7 @@ class CropAndPad(DualTransform):
             - If float: crop/pad all sides by this fraction.
             - If tuple of 2 floats: crop/pad by (top/bottom, left/right) fractions.
             - If tuple of 4 floats: crop/pad by (top, right, bottom, left) fractions.
-            - Each float can also be a tuple of 2 floats for a range, or a list of floats for discrete choices.
+            - Each float can also be a tuple of 2 floats for a range.
             Default: None.
 
         border_mode (int):
@@ -2574,6 +2619,9 @@ class CropAndPad(DualTransform):
     Image types:
         uint8, float32
 
+
+    Supported bboxes:
+        hbb, obb
     Note:
         - This transform will never crop images below a height or width of 1.
         - When using pixel values (px), the image will be cropped/padded by exactly that many pixels.
@@ -2676,6 +2724,7 @@ class CropAndPad(DualTransform):
     """
 
     _targets = ALL_TARGETS
+    _supported_bbox_types: frozenset[str] = frozenset({"hbb", "obb"})
 
     class InitSchema(BaseTransformInitSchema):
         px: PxType | None
@@ -2723,8 +2772,8 @@ class CropAndPad(DualTransform):
 
     def __init__(
         self,
-        px: int | list[int] | None = None,
-        percent: float | list[float] | None = None,
+        px: PxType | None = None,
+        percent: PercentType | None = None,
         keep_size: bool = True,
         sample_independently: bool = True,
         interpolation: Literal[
@@ -2817,7 +2866,13 @@ class CropAndPad(DualTransform):
         result_shape: tuple[int, int],
         **params: Any,
     ) -> np.ndarray:
-        return fcrops.crop_and_pad_bboxes(bboxes, crop_params, pad_params, params["shape"][:2], result_shape)
+        # Get bbox_type from processor if available (when used via Compose)
+        # Default to "hbb" for backward compatibility when called directly
+        bbox_processor = self.processors.get("bboxes")
+        bbox_type: Literal["obb", "hbb"] = "hbb"
+        if bbox_processor is not None and isinstance(bbox_processor.params, BboxParams):
+            bbox_type = bbox_processor.params.bbox_type
+        return fcrops.crop_and_pad_bboxes(bboxes, crop_params, pad_params, params["shape"][:2], result_shape, bbox_type)
 
     def apply_to_keypoints(
         self,
@@ -2925,11 +2980,9 @@ class CropAndPad(DualTransform):
             px = self.py_random.randrange(*self.px)
             return [px] * 4
         if isinstance(self.px[0], int):
-            return self.px
-        if len(self.px[0]) == PAIR:
-            return [self.py_random.randrange(*i) for i in self.px]
-
-        return [self.py_random.choice(i) for i in self.px]
+            return list(cast("tuple[int, int, int, int]", self.px))
+        # len(self.px[0]) == PAIR case - each element is a range tuple
+        return [self.py_random.randrange(*cast("tuple[int, int]", i)) for i in self.px]
 
     def _get_percent_params(self) -> list[float]:
         if self.percent is None:
@@ -2945,11 +2998,10 @@ class CropAndPad(DualTransform):
                 px = self.py_random.uniform(*self.percent)
                 params = [px] * 4
         elif isinstance(self.percent[0], (int, float)):
-            params = self.percent
-        elif len(self.percent[0]) == PAIR:
-            params = [self.py_random.uniform(*i) for i in self.percent]
+            params = list(cast("tuple[float, float, float, float]", self.percent))
         else:
-            params = [self.py_random.choice(i) for i in self.percent]
+            # len(self.percent[0]) == PAIR case - each element is a range tuple
+            params = [self.py_random.uniform(*cast("tuple[float, float]", i)) for i in self.percent]
 
         return params  # params = [top, right, bottom, left]
 
@@ -2996,6 +3048,9 @@ class RandomCropFromBorders(BaseCrop):
     Image types:
         uint8, float32
 
+
+    Supported bboxes:
+        hbb, obb
     Note:
         - The actual amount of cropping for each side is randomly chosen between 0 and
           the specified maximum for each application of the transform.
@@ -3155,6 +3210,9 @@ class AtLeastOneBBoxRandomCrop(BaseCrop):
     Image types:
         uint8, float32
 
+
+    Supported bboxes:
+        hbb, obb
     Raises:
         CropSizeError: If requested crop size exceeds image dimensions
 

@@ -61,6 +61,9 @@ class VerticalFlip(DualTransform):
     Image types:
         uint8, float32
 
+
+    Supported bboxes:
+        hbb, obb
     Note:
         - This transform flips the image upside down. The top of the image becomes the bottom and vice versa.
         - The dimensions of the image remain unchanged.
@@ -97,6 +100,7 @@ class VerticalFlip(DualTransform):
     """
 
     _targets = ALL_TARGETS
+    _supported_bbox_types: frozenset[str] = frozenset({"hbb", "obb"})
 
     def apply(self, img: ImageType, **params: Any) -> ImageType:
         return vflip(img)
@@ -151,6 +155,9 @@ class HorizontalFlip(DualTransform):
     Image types:
         uint8, float32
 
+
+    Supported bboxes:
+        hbb, obb
     Examples:
         >>> import numpy as np
         >>> import albumentations as A
@@ -179,6 +186,7 @@ class HorizontalFlip(DualTransform):
     """
 
     _targets = ALL_TARGETS
+    _supported_bbox_types: frozenset[str] = frozenset({"hbb", "obb"})
 
     def apply(self, img: ImageType, **params: Any) -> ImageType:
         return hflip(img)
@@ -236,6 +244,9 @@ class Transpose(DualTransform):
     Image types:
         uint8, float32
 
+    Supported bboxes:
+        hbb, obb
+
     Note:
         - The dimensions of the output will be swapped compared to the input. For example,
           an input image of shape (100, 200, 3) will result in an output of shape (200, 100, 3).
@@ -272,6 +283,7 @@ class Transpose(DualTransform):
     """
 
     _targets = ALL_TARGETS
+    _supported_bbox_types: frozenset[str] = frozenset({"hbb", "obb"})
 
     def apply(self, img: ImageType, **params: Any) -> ImageType:
         return fgeometric.transpose(img)
@@ -348,6 +360,9 @@ class D4(DualTransform):
     Image types:
         uint8, float32
 
+    Supported bboxes:
+        hbb, obb
+
     Note:
         - This transform is particularly useful for augmenting data that does not have a clear orientation,
           such as top-view satellite or drone imagery, or certain types of medical images.
@@ -371,6 +386,7 @@ class D4(DualTransform):
     """
 
     _targets = ALL_TARGETS
+    _supported_bbox_types: frozenset[str] = frozenset({"hbb", "obb"})
 
     class InitSchema(BaseTransformInitSchema):
         pass
@@ -520,6 +536,9 @@ class SquareSymmetry(D4):
 
     Image types:
         uint8, float32
+
+    Supported bboxes:
+        hbb, obb
 
     Note:
         - This transform is particularly useful for augmenting data that does not have a clear orientation,

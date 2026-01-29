@@ -73,6 +73,9 @@ class RandomRotate90(DualTransform):
     Image types:
         uint8, float32
 
+
+    Supported bboxes:
+        hbb, obb
     Examples:
         >>> import numpy as np
         >>> import albumentations as A
@@ -107,6 +110,7 @@ class RandomRotate90(DualTransform):
     """
 
     _targets = ALL_TARGETS
+    _supported_bbox_types: frozenset[str] = frozenset({"hbb", "obb"})
 
     def __init__(
         self,
@@ -204,6 +208,9 @@ class Rotate(DualTransform):
     Image types:
         uint8, float32
 
+
+    Supported bboxes:
+        hbb, obb
     Note:
         - The rotation angle is randomly selected for each execution within the range specified by 'limit'.
         - When 'crop_border' is False, the output image will have the same size as the input, potentially
@@ -259,6 +266,7 @@ class Rotate(DualTransform):
     """
 
     _targets = ALL_TARGETS
+    _supported_bbox_types: frozenset[str] = frozenset({"hbb", "obb"})
 
     class InitSchema(RotateInitSchema):
         rotate_method: Literal["largest_box", "ellipse"]
@@ -377,6 +385,7 @@ class Rotate(DualTransform):
                 bboxes_out,
                 (x_min, y_min, x_max, y_max),
                 image_shape,
+                bbox_type,
             )
         return bboxes_out
 
@@ -518,6 +527,9 @@ class SafeRotate(Affine):
     Image types:
         uint8, float32
 
+
+    Supported bboxes:
+        hbb, obb
     Note:
         - The rotation is performed around the center of the image.
         - After rotation, the image is scaled to fit within the original frame, which may cause some distortion.
@@ -606,7 +618,7 @@ class SafeRotate(Affine):
             cv2.INTER_LANCZOS4,
         ] = cv2.INTER_NEAREST,
         fill: tuple[float, ...] | float = 0,
-        fill_mask: tuple[float, ...] | float = 0,
+        fill_mask: tuple[float, ...] | float | None = None,
         p: float = 0.5,
     ):
         super().__init__(
