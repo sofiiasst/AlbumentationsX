@@ -7,13 +7,13 @@ import cv2
 import numpy as np
 
 
-def find_image(base_path: Path, stem: str) -> Path:
-    """Return the first existing image matching stem with common extensions."""
-    for ext in (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"):
-        candidate = base_path / f"{stem}{ext}"
-        if candidate.exists():
-            return candidate
-    raise FileNotFoundError(f"No image found for {stem} in {base_path}")
+def find_images(base_path: Path) -> list[Path]:
+    """Return all background images in the directory."""
+    extensions = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
+    images = []
+    for ext in extensions:
+        images.extend(sorted(base_path.glob(f"*{ext}")))
+    return sorted(set(images))  # Remove duplicates and sort
 
 
 def load_foreground(path: Path) -> np.ndarray:
@@ -28,7 +28,7 @@ def load_foreground(path: Path) -> np.ndarray:
     return fg
 
 
-def paste_foreground(fg_rgba: np.ndarray, bg_rgb: np.ndarray, tool_bbox: dict, rotate_tool: bool = True) -> tuple:
+def paste_foreground(fg_rgba: np.ndarray, bg_bgr: np.ndarray, tool_bbox: dict, rotate_tool: bool = True) -> tuple:
     """Paste foreground on background and return composited image + transformed bbox."""
     
     # Optional: rotate the tool before pasting
@@ -58,24 +58,33 @@ def paste_foreground(fg_rgba: np.ndarray, bg_rgb: np.ndarray, tool_bbox: dict, r
     
     # Randomly scale foreground relative to background width
     scale = random.uniform(0.25, 0.5)
-    new_w = max(1, int(bg_rgb.shape[1] * scale))
+    new_w = max(1, int(bg_bgr.shape[1] * scale))
     new_h = max(1, int(fg_rgba.shape[0] * new_w / fg_rgba.shape[1]))
+    
+    # Ensure foreground fits within background
+    if new_w >= bg_bgr.shape[1]:
+        new_w = int(bg_bgr.shape[1] * 0.8)
+        new_h = max(1, int(fg_rgba.shape[0] * new_w / fg_rgba.shape[1]))
+    if new_h >= bg_bgr.shape[0]:
+        new_h = int(bg_bgr.shape[0] * 0.8)
+        new_w = max(1, int(fg_rgba.shape[1] * new_h / fg_rgba.shape[0]))
+    
     fg_resized = cv2.resize(fg_rgba, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
     alpha = fg_resized[:, :, 3].astype(float) / 255.0
     alpha_3 = cv2.merge([alpha, alpha, alpha])
-    fg_rgb = fg_resized[:, :, :3].astype(float)
+    fg_bgr = fg_resized[:, :, :3].astype(float)
 
-    max_x = bg_rgb.shape[1] - new_w
-    max_y = bg_rgb.shape[0] - new_h
+    max_x = bg_bgr.shape[1] - new_w
+    max_y = bg_bgr.shape[0] - new_h
     if max_x < 0 or max_y < 0:
-        raise ValueError("Foreground is larger than background after resize.")
+        return None, None  # Skip this image instead of raising error
     x = random.randint(0, max_x)
     y = random.randint(0, max_y)
 
-    roi = bg_rgb[y : y + new_h, x : x + new_w].astype(float)
-    blended = roi * (1.0 - alpha_3) + fg_rgb * alpha_3
-    bg_rgb[y : y + new_h, x : x + new_w] = blended
+    roi = bg_bgr[y : y + new_h, x : x + new_w].astype(float)
+    blended = roi * (1.0 - alpha_3) + fg_bgr * alpha_3
+    bg_bgr[y : y + new_h, x : x + new_w] = blended
 
     # Transform bounding box
     scale_factor = new_w / fg_rgba.shape[1]
@@ -89,7 +98,7 @@ def paste_foreground(fg_rgba: np.ndarray, bg_rgb: np.ndarray, tool_bbox: dict, r
         return None, None
 
     # Get final image dimensions (BEFORE augmentation)
-    img_h, img_w = bg_rgb.shape[:2]
+    img_h, img_w = bg_bgr.shape[:2]
 
     # Normalize to YOLO format (0-1) using final image dimensions
     yolo_x_center = (bbox_x + bbox_w / 2) / img_w
@@ -111,56 +120,41 @@ def paste_foreground(fg_rgba: np.ndarray, bg_rgb: np.ndarray, tool_bbox: dict, r
         "yolo_format": f"0 {yolo_x_center:.6f} {yolo_y_center:.6f} {yolo_w:.6f} {yolo_h:.6f}",
     }
 
-    return bg_rgb.astype(np.uint8), transformed_bbox
+    return bg_bgr.astype(np.uint8), transformed_bbox
 
 
 def main():
     repo_root = Path(__file__).resolve().parent.parent
-    fg_path = repo_root / "tools/hammer/1.png"
-    bbox_path = repo_root / "tools/hammer/bbox.json"
-
-    # Load original tool bbox
-    if not bbox_path.exists():
-        raise FileNotFoundError(f"Bbox file not found: {bbox_path}")
-    with open(bbox_path) as f:
-        bbox_data = json.load(f)
+    hammer_dir = repo_root / "tools/hammer"
     
-    # Convert YOLO format to pixel coordinates
-    img_w = bbox_data["image_width"]
-    img_h = bbox_data["image_height"]
-    yolo = bbox_data["tool_bbox_yolo"]
+    # Find all image and bbox pairs
+    image_files = sorted([f for f in hammer_dir.glob("*.png") if f.stem.isdigit()])
     
-    x_center = yolo["x_center_norm"] * img_w
-    y_center = yolo["y_center_norm"] * img_h
-    width = yolo["width_norm"] * img_w
-    height = yolo["height_norm"] * img_h
+    if not image_files:
+        raise FileNotFoundError(f"No image files found in {hammer_dir}")
     
-    tool_bbox = {
-        "x": x_center - width / 2,
-        "y": y_center - height / 2,
-        "width": width,
-        "height": height,
-    }
-
-    fg_rgba = load_foreground(fg_path)
+    print(f"Found {len(image_files)} tool image(s) to process")
     
-    # Load both backgrounds
-    bg_path_1 = find_image(repo_root / "data/backgrounds", "background_1")
-    bg_path_2 = find_image(repo_root / "data/backgrounds", "background_2")
+    # Load all backgrounds
+    bg_dir = repo_root / "data/backgrounds"
+    bg_paths = find_images(bg_dir)
     
-    bg_bgr_1 = cv2.imread(str(bg_path_1), cv2.IMREAD_COLOR)
-    bg_bgr_2 = cv2.imread(str(bg_path_2), cv2.IMREAD_COLOR)
+    if not bg_paths:
+        raise FileNotFoundError(f"No background images found in {bg_dir}")
     
-    if bg_bgr_1 is None:
-        raise FileNotFoundError(f"Background not found: {bg_path_1}")
-    if bg_bgr_2 is None:
-        raise FileNotFoundError(f"Background not found: {bg_path_2}")
+    print(f"Found {len(bg_paths)} background image(s)")
+    
+    backgrounds = {}
+    for bg_path in bg_paths:
+        bg_bgr = cv2.imread(str(bg_path), cv2.IMREAD_COLOR)
+        if bg_bgr is None:
+            print(f"Warning: Could not read background {bg_path.name}, skipping...")
+            continue
+        backgrounds[bg_path.stem] = bg_bgr
 
     transform = A.Compose(
         [
-            A.RandomBrightnessContrast(p=0.4),
-            A.HueSaturationValue(p=0.3),
-            A.GaussianBlur(p=0.2),
+            A.GaussianBlur(blur_limit=(3, 5), p=0.2),
             A.HorizontalFlip(p=0.5),
         ],
         bbox_params=A.BboxParams(format="pascal_voc", label_fields=["class_labels"], min_visibility=0.3),
@@ -184,80 +178,122 @@ def main():
     labels_dir.mkdir(exist_ok=True)
 
     # Save annotations list
-    annotations = []
-
-    num_images = 30
-    for i in range(num_images):
-        # Use background_1 for first 15 images, background_2 for next 15
-        bg_bgr = bg_bgr_1 if i < 15 else bg_bgr_2
-        bg_rgb = cv2.cvtColor(bg_bgr, cv2.COLOR_BGR2RGB).copy()
-        composed, bbox = paste_foreground(fg_rgba, bg_rgb, tool_bbox)
+    all_annotations = []
+    
+    # Process each image
+    for img_idx, fg_path in enumerate(image_files, 1):
+        # Find corresponding bbox file
+        stem = fg_path.stem  # e.g., "1", "2", etc.
+        bbox_path = hammer_dir / f"bbox{stem if stem != '1' else ''}.json"
         
-        if composed is None:
+        if not bbox_path.exists():
+            print(f"Warning: Bbox file not found for {fg_path.name}, skipping...")
             continue
+        
+        print(f"\n{'='*60}")
+        print(f"Processing image {img_idx}/{len(image_files)}: {fg_path.name}")
+        print(f"{'='*60}")
+        
+        # Load original tool bbox
+        with open(bbox_path) as f:
+            bbox_data = json.load(f)
+        
+        # Convert YOLO format to pixel coordinates
+        img_w = bbox_data["image_width"]
+        img_h = bbox_data["image_height"]
+        yolo = bbox_data["tool_bbox_yolo"]
+        
+        x_center = yolo["x_center_norm"] * img_w
+        y_center = yolo["y_center_norm"] * img_h
+        width = yolo["width_norm"] * img_w
+        height = yolo["height_norm"] * img_h
+        
+        tool_bbox = {
+            "x": x_center - width / 2,
+            "y": y_center - height / 2,
+            "width": width,
+            "height": height,
+        }
+        
+        fg_rgba = load_foreground(fg_path)
+        
+        # Generate images for each background
+        for bg_stem, bg_bgr in backgrounds.items():
+            num_images = 20
+            for i in range(num_images):
+                bg_bgr_copy = bg_bgr.copy()
+                composed, bbox = paste_foreground(fg_rgba, bg_bgr_copy, tool_bbox)
+                
+                if composed is None:
+                    continue
 
-        # Prepare bbox for Albumentations (pascal_voc)
-        bboxes = [[bbox["x_min"], bbox["y_min"], bbox["x_max"], bbox["y_max"]]]
-        class_labels = ["tool"]
+                # Prepare bbox for Albumentations (pascal_voc)
+                bboxes = [[bbox["x_min"], bbox["y_min"], bbox["x_max"], bbox["y_max"]]]
+                class_labels = ["tool"]
 
-        transformed = transform(image=composed, bboxes=bboxes, class_labels=class_labels)
-        augmented = transformed["image"]
-        out_bboxes = transformed["bboxes"]
+                transformed = transform(image=composed, bboxes=bboxes, class_labels=class_labels)
+                augmented = transformed["image"]
+                out_bboxes = transformed["bboxes"]
 
-        if out_bboxes is None or len(out_bboxes) == 0:
-            print(f"[{i+1}/{num_images}] Skipped (bbox lost after transform)")
-            continue
+                if out_bboxes is None or len(out_bboxes) == 0:
+                    print(f"    [{i+1}/{num_images}] Skipped (bbox lost after transform)")
+                    continue
 
-        x_min, y_min, x_max, y_max = out_bboxes[0]
-        img_h, img_w = augmented.shape[:2]
+                x_min, y_min, x_max, y_max = out_bboxes[0]
+                aug_h, aug_w = augmented.shape[:2]
 
-        bbox_w = x_max - x_min
-        bbox_h = y_max - y_min
-        bbox_x = x_min
-        bbox_y = y_min
+                bbox_w = x_max - x_min
+                bbox_h = y_max - y_min
+                bbox_x = x_min
+                bbox_y = y_min
 
-        # Normalize to YOLO format
-        yolo_x_center = (bbox_x + bbox_w / 2) / img_w
-        yolo_y_center = (bbox_y + bbox_h / 2) / img_h
-        yolo_w = bbox_w / img_w
-        yolo_h = bbox_h / img_h
+                # Normalize to YOLO format
+                yolo_x_center = (bbox_x + bbox_w / 2) / aug_w
+                yolo_y_center = (bbox_y + bbox_h / 2) / aug_h
+                yolo_w = bbox_w / aug_w
+                yolo_h = bbox_h / aug_h
 
-        yolo_str = f"0 {yolo_x_center:.6f} {yolo_y_center:.6f} {yolo_w:.6f} {yolo_h:.6f}"
+                yolo_str = f"0 {yolo_x_center:.6f} {yolo_y_center:.6f} {yolo_w:.6f} {yolo_h:.6f}"
 
-        filename = f"tool_on_background_{i:03d}.jpg"
-        out_path = images_dir / filename
-        cv2.imwrite(str(out_path), cv2.cvtColor(augmented, cv2.COLOR_RGB2BGR))
-        print(f"[{i+1}/{num_images}] Saved {filename}")
+                filename = f"tool_{stem}_on_{bg_stem}_{i:03d}.jpg"
+                out_path = images_dir / filename
+                cv2.imwrite(str(out_path), augmented)
+                print(f"    [{i+1}/{num_images}] Saved {filename}")
 
-        # Save YOLO format txt file
-        txt_filename = f"tool_on_background_{i:03d}.txt"
-        txt_path = labels_dir / txt_filename
-        with open(txt_path, "w") as f:
-            f.write(yolo_str)
+                # Save YOLO format txt file
+                txt_filename = f"tool_{stem}_on_{bg_stem}_{i:03d}.txt"
+                txt_path = labels_dir / txt_filename
+                with open(txt_path, "w") as f:
+                    f.write(yolo_str)
 
-        # Store annotation
-        annotations.append({
-            "image": filename,
-            "bbox": {
-                "x": bbox_x,
-                "y": bbox_y,
-                "width": bbox_w,
-                "height": bbox_h,
-                "x_min": bbox_x,
-                "y_min": bbox_y,
-                "x_max": x_max,
-                "y_max": y_max,
-                "img_h": img_h,
-                "img_w": img_w,
-                "yolo_format": yolo_str,
-            },
-        })
+                # Store annotation
+                all_annotations.append({
+                    "image": filename,
+                    "source_image": fg_path.name,
+                    "background": bg_stem,
+                    "bbox": {
+                        "x": bbox_x,
+                        "y": bbox_y,
+                        "width": bbox_w,
+                        "height": bbox_h,
+                        "x_min": bbox_x,
+                        "y_min": bbox_y,
+                        "x_max": x_max,
+                        "y_max": y_max,
+                        "img_h": aug_h,
+                        "img_w": aug_w,
+                        "yolo_format": yolo_str,
+                    },
+                })
 
     # Save all annotations to JSON
     annotations_path = outputs_dir / "annotations.json"
     with open(annotations_path, "w") as f:
-        json.dump(annotations, f, indent=2)
-    print(f"\nAnnotations saved to {annotations_path}")
+        json.dump(all_annotations, f, indent=2)
+    print(f"\n{'='*60}")
+    print(f"All annotations saved to {annotations_path}")
+    print(f"Total images generated: {len(all_annotations)}")
+    print(f"{'='*60}")
 
 
 if __name__ == "__main__":
