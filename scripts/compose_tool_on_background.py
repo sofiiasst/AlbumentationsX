@@ -96,16 +96,16 @@ def paste_foreground(fg_rgba: np.ndarray, bg_bgr: np.ndarray, tool_bbox: dict, r
     # Get final image dimensions (BEFORE augmentation)
     img_h, img_w = bg_bgr.shape[:2]
 
-    # Skip if bbox is outside realistic bounds (5%-20% of image area)
+    # Skip if bbox is outside realistic bounds (3%-20% of image area)
     img_area = img_h * img_w
     bbox_area = bbox_w * bbox_h
     bbox_ratio = bbox_area / img_area
-    if bbox_ratio < 0.05 or bbox_ratio > 0.20:
+    if bbox_ratio < 0.03 or bbox_ratio > 0.20:
         return None, None
     
-    # Tool must be grounded (bottom of bbox below 75% of image height)
-    bbox_y_max = bbox_y + bbox_h
-    if bbox_y_max < img_h * 0.75:
+    # Tool must be grounded (bbox within the bottom 75% of the image)
+    bbox_y_min = bbox_y
+    if bbox_y_min < img_h * 0.25:
         return None, None
 
     # Normalize to YOLO format (0-1) using final image dimensions
@@ -227,8 +227,13 @@ def main():
         
         # Generate images for each background
         for bg_stem, bg_bgr in backgrounds.items():
-            num_images = 20
-            for i in range(num_images):
+            num_images_per_bg = 20
+            saved_count = 0
+            attempts = 0
+            max_attempts = 200  # Prevent infinite loop
+            
+            while saved_count < num_images_per_bg and attempts < max_attempts:
+                attempts += 1
                 bg_bgr_copy = bg_bgr.copy()
                 composed, bbox = paste_foreground(fg_rgba, bg_bgr_copy, tool_bbox)
                 
@@ -244,7 +249,6 @@ def main():
                 out_bboxes = transformed["bboxes"]
 
                 if out_bboxes is None or len(out_bboxes) == 0:
-                    print(f"    [{i+1}/{num_images}] Skipped (bbox lost after transform)")
                     continue
 
                 x_min, y_min, x_max, y_max = out_bboxes[0]
@@ -263,13 +267,13 @@ def main():
 
                 yolo_str = f"0 {yolo_x_center:.6f} {yolo_y_center:.6f} {yolo_w:.6f} {yolo_h:.6f}"
 
-                filename = f"tool_{stem}_on_{bg_stem}_{i:03d}.jpg"
+                filename = f"tool_{stem}_on_{bg_stem}_{saved_count:03d}.jpg"
                 out_path = images_dir / filename
                 cv2.imwrite(str(out_path), augmented)
-                print(f"    [{i+1}/{num_images}] Saved {filename}")
+                print(f"    [{saved_count+1}/{num_images_per_bg}] Saved {filename}")
 
                 # Save YOLO format txt file
-                txt_filename = f"tool_{stem}_on_{bg_stem}_{i:03d}.txt"
+                txt_filename = f"tool_{stem}_on_{bg_stem}_{saved_count:03d}.txt"
                 txt_path = labels_dir / txt_filename
                 with open(txt_path, "w") as f:
                     f.write(yolo_str)
@@ -293,6 +297,11 @@ def main():
                         "yolo_format": yolo_str,
                     },
                 })
+                
+                saved_count += 1
+            
+            if saved_count < num_images_per_bg:
+                print(f"  Warning: Only generated {saved_count}/{num_images_per_bg} images for {bg_stem}")
 
     # Save all annotations to JSON
     annotations_path = outputs_dir / "annotations.json"
