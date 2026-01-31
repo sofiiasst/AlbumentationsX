@@ -93,12 +93,15 @@ def paste_foreground(fg_rgba: np.ndarray, bg_bgr: np.ndarray, tool_bbox: dict, r
     bbox_w = int(tool_bbox["width"] * scale_factor)
     bbox_h = int(tool_bbox["height"] * scale_factor)
     
-    # Skip if bbox is too small
-    if bbox_w < 5 or bbox_h < 5:
-        return None, None
-
     # Get final image dimensions (BEFORE augmentation)
     img_h, img_w = bg_bgr.shape[:2]
+
+    # Skip if bbox is outside realistic bounds (5%-20% of image area)
+    img_area = img_h * img_w
+    bbox_area = bbox_w * bbox_h
+    bbox_ratio = bbox_area / img_area
+    if bbox_ratio < 0.05 or bbox_ratio > 0.20:
+        return None, None
 
     # Normalize to YOLO format (0-1) using final image dimensions
     yolo_x_center = (bbox_x + bbox_w / 2) / img_w
