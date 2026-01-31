@@ -102,6 +102,11 @@ def paste_foreground(fg_rgba: np.ndarray, bg_bgr: np.ndarray, tool_bbox: dict, r
     bbox_ratio = bbox_area / img_area
     if bbox_ratio < 0.05 or bbox_ratio > 0.20:
         return None, None
+    
+    # Tool must be grounded (bottom of bbox below 75% of image height)
+    bbox_y_max = bbox_y + bbox_h
+    if bbox_y_max < img_h * 0.75:
+        return None, None
 
     # Normalize to YOLO format (0-1) using final image dimensions
     yolo_x_center = (bbox_x + bbox_w / 2) / img_w
