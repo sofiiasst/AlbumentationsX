@@ -13,7 +13,7 @@ COLORS = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Visualize YOLO ground truth labels.")
-    parser.add_argument("--run", type=Path, default=Path("outputs/run_1"),
+    parser.add_argument("--run", type=Path, default=Path("outputs/run_16"),
                         help="Run directory (expects images/ and labels/ subdirectories inside).")
     parser.add_argument("--output", type=Path, default=Path("outputs/visualize_bboxes"),
                         help="Where to save annotated images.")

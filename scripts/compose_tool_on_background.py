@@ -34,7 +34,7 @@ def paste_foreground(fg_rgba: np.ndarray, bg_bgr: np.ndarray, tool_bbox: dict, r
     # Optional: rotate the tool before pasting
     if rotate_tool:
         fg_rgba = A.Rotate(
-            limit=15,
+            limit=25,
             border_mode=cv2.BORDER_CONSTANT,
             p=1.0
         )(image=fg_rgba)["image"]

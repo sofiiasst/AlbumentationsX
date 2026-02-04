@@ -171,3 +171,9 @@ notebooks/
 
 
 /outputs/*
+
+/tools/drill/*
+/tools/hammer/*
+/tools/knife/*
+/tools/outputs/*
+/tools/input.json
