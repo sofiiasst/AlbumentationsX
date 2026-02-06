@@ -57,7 +57,7 @@ def paste_foreground(fg_rgba: np.ndarray, bg_bgr: np.ndarray, tool_bbox: dict, r
             }
     
     # Randomly scale foreground relative to background width
-    scale = random.uniform(0.25, 0.5)
+    scale = random.uniform(0.15, 0.30)
     new_w = max(1, int(bg_bgr.shape[1] * scale))
     new_h = max(1, int(fg_rgba.shape[0] * new_w / fg_rgba.shape[1]))
     
@@ -162,6 +162,8 @@ def main():
 
     transform = A.Compose(
         [
+            A.RandomBrightnessContrast(brightness_limit=0.08, contrast_limit=0.15, p=0.4),
+            A.RandomShadow(shadow_roi=(0.2, 0.7, 0.8, 1), num_shadows_limit=(1, 2), p=0.3), #(x_min, y_min, x_max, y_max)
             A.GaussianBlur(blur_limit=(3, 5), p=0.2),
             A.HorizontalFlip(p=0.5),
         ],
