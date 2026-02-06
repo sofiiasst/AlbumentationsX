@@ -172,10 +172,6 @@ notebooks/
 
 /outputs/*
 
-/tools/drill/*
-/tools/hammer/*
-/tools/knife/*
-/tools/saw/*
-/tools/wranch/*
 /tools/outputs/*
 /tools/input.json
+/tools_source/*

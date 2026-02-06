@@ -133,15 +133,15 @@ def paste_foreground(fg_rgba: np.ndarray, bg_bgr: np.ndarray, tool_bbox: dict, r
 
 def main():
     repo_root = Path(__file__).resolve().parent.parent
-    hammer_dir = repo_root / "tools/hammer"
+    tools_source_dir = repo_root / "tools_source"
     
-    # Find all image and bbox pairs
-    image_files = sorted([f for f in hammer_dir.glob("*.png") if f.stem.isdigit()])
+    # Find all tool directories
+    tool_dirs = sorted([d for d in tools_source_dir.iterdir() if d.is_dir()])
     
-    if not image_files:
-        raise FileNotFoundError(f"No image files found in {hammer_dir}")
+    if not tool_dirs:
+        raise FileNotFoundError(f"No tool directories found in {tools_source_dir}")
     
-    print(f"Found {len(image_files)} tool image(s) to process")
+    print(f"Found {len(tool_dirs)} tool directories to process: {[d.name for d in tool_dirs]}")
     
     # Load all backgrounds
     bg_dir = repo_root / "data/backgrounds"
@@ -190,129 +190,148 @@ def main():
     # Save annotations list
     all_annotations = []
     
-    # Process each image
-    for img_idx, fg_path in enumerate(image_files, 1):
-        # Find corresponding bbox file
-        stem = fg_path.stem  # e.g., "1", "2", etc.
-        bbox_path = hammer_dir / f"bbox{stem if stem != '1' else ''}.json"
+    # Process each tool directory
+    for tool_dir in tool_dirs:
+        tool_name = tool_dir.name
+        print(f"\n{'#'*60}")
+        print(f"# Processing tool: {tool_name.upper()}")
+        print(f"{'#'*60}")
         
-        if not bbox_path.exists():
-            print(f"Warning: Bbox file not found for {fg_path.name}, skipping...")
+        # Find all image and bbox pairs for this tool
+        image_files = sorted([f for f in tool_dir.glob("*.png") if f.stem.isdigit()])
+        
+        if not image_files:
+            print(f"Warning: No image files found in {tool_dir}, skipping...")
             continue
         
-        print(f"\n{'='*60}")
-        print(f"Processing image {img_idx}/{len(image_files)}: {fg_path.name}")
-        print(f"{'='*60}")
+        print(f"Found {len(image_files)} image(s) for {tool_name}")
         
-        # Load original tool bbox
-        with open(bbox_path) as f:
-            bbox_data = json.load(f)
-        
-        # Convert YOLO format to pixel coordinates
-        img_w = bbox_data["image_width"]
-        img_h = bbox_data["image_height"]
-        yolo = bbox_data["tool_bbox_yolo"]
-        
-        x_center = yolo["x_center_norm"] * img_w
-        y_center = yolo["y_center_norm"] * img_h
-        width = yolo["width_norm"] * img_w
-        height = yolo["height_norm"] * img_h
-        
-        tool_bbox = {
-            "x": x_center - width / 2,
-            "y": y_center - height / 2,
-            "width": width,
-            "height": height,
-        }
-        
-        fg_rgba = load_foreground(fg_path)
-        
-        # Generate images for each background
-        for bg_stem, bg_bgr in backgrounds.items():
-            num_images_per_bg = 20
-            saved_count = 0
-            attempts = 0
-            max_attempts = 200  # Prevent infinite loop
+        # Process each image
+        for img_idx, fg_path in enumerate(image_files, 1):
+            # Find corresponding bbox file
+            stem = fg_path.stem  # e.g., "1", "2", etc.
+            bbox_path = tool_dir / f"bbox{stem if stem != '1' else ''}.json"
             
-            while saved_count < num_images_per_bg and attempts < max_attempts:
-                attempts += 1
-                bg_bgr_copy = bg_bgr.copy()
-                composed, bbox = paste_foreground(fg_rgba, bg_bgr_copy, tool_bbox)
-                
-                if composed is None:
-                    continue
-
-                # Prepare bbox for Albumentations (pascal_voc)
-                bboxes = [[bbox["x_min"], bbox["y_min"], bbox["x_max"], bbox["y_max"]]]
-                class_labels = ["tool"]
-
-                transformed = transform(image=composed, bboxes=bboxes, class_labels=class_labels)
-                augmented = transformed["image"]
-                out_bboxes = transformed["bboxes"]
-
-                if out_bboxes is None or len(out_bboxes) == 0:
-                    continue
-
-                x_min, y_min, x_max, y_max = out_bboxes[0]
-                aug_h, aug_w = augmented.shape[:2]
-
-                bbox_w = x_max - x_min
-                bbox_h = y_max - y_min
-                bbox_x = x_min
-                bbox_y = y_min
-
-                # Normalize to YOLO format
-                yolo_x_center = (bbox_x + bbox_w / 2) / aug_w
-                yolo_y_center = (bbox_y + bbox_h / 2) / aug_h
-                yolo_w = bbox_w / aug_w
-                yolo_h = bbox_h / aug_h
-
-                yolo_str = f"0 {yolo_x_center:.6f} {yolo_y_center:.6f} {yolo_w:.6f} {yolo_h:.6f}"
-
-                filename = f"tool_{stem}_on_{bg_stem}_{saved_count:03d}.jpg"
-                out_path = images_dir / filename
-                cv2.imwrite(str(out_path), augmented)
-                print(f"    [{saved_count+1}/{num_images_per_bg}] Saved {filename}")
-
-                # Save YOLO format txt file
-                txt_filename = f"tool_{stem}_on_{bg_stem}_{saved_count:03d}.txt"
-                txt_path = labels_dir / txt_filename
-                with open(txt_path, "w") as f:
-                    f.write(yolo_str)
-
-                # Store annotation
-                all_annotations.append({
-                    "image": filename,
-                    "source_image": fg_path.name,
-                    "background": bg_stem,
-                    "bbox": {
-                        "x": bbox_x,
-                        "y": bbox_y,
-                        "width": bbox_w,
-                        "height": bbox_h,
-                        "x_min": bbox_x,
-                        "y_min": bbox_y,
-                        "x_max": x_max,
-                        "y_max": y_max,
-                        "img_h": aug_h,
-                        "img_w": aug_w,
-                        "yolo_format": yolo_str,
-                    },
-                })
-                
-                saved_count += 1
+            if not bbox_path.exists():
+                print(f"Warning: Bbox file not found for {fg_path.name}, skipping...")
+                continue
             
-            if saved_count < num_images_per_bg:
-                print(f"  Warning: Only generated {saved_count}/{num_images_per_bg} images for {bg_stem}")
+            print(f"\n{'='*60}")
+            print(f"Processing {tool_name} image {img_idx}/{len(image_files)}: {fg_path.name}")
+            print(f"{'='*60}")
+            
+            # Load original tool bbox
+            with open(bbox_path) as f:
+                bbox_data = json.load(f)
+            
+            # Convert YOLO format to pixel coordinates
+            img_w = bbox_data["image_width"]
+            img_h = bbox_data["image_height"]
+            yolo = bbox_data["tool_bbox_yolo"]
+            
+            x_center = yolo["x_center_norm"] * img_w
+            y_center = yolo["y_center_norm"] * img_h
+            width = yolo["width_norm"] * img_w
+            height = yolo["height_norm"] * img_h
+            
+            tool_bbox = {
+                "x": x_center - width / 2,
+                "y": y_center - height / 2,
+                "width": width,
+                "height": height,
+            }
+            
+            fg_rgba = load_foreground(fg_path)
+            
+            # Generate images for each background
+            for bg_stem, bg_bgr in backgrounds.items():
+                num_images_per_bg = 20
+                saved_count = 0
+                attempts = 0
+                max_attempts = 200  # Prevent infinite loop
+                
+                while saved_count < num_images_per_bg and attempts < max_attempts:
+                    attempts += 1
+                    bg_bgr_copy = bg_bgr.copy()
+                    composed, bbox = paste_foreground(fg_rgba, bg_bgr_copy, tool_bbox)
+                    
+                    if composed is None:
+                        continue
+
+                    # Prepare bbox for Albumentations (pascal_voc)
+                    bboxes = [[bbox["x_min"], bbox["y_min"], bbox["x_max"], bbox["y_max"]]]
+                    class_labels = ["tool"]
+
+                    transformed = transform(image=composed, bboxes=bboxes, class_labels=class_labels)
+                    augmented = transformed["image"]
+                    out_bboxes = transformed["bboxes"]
+
+                    if out_bboxes is None or len(out_bboxes) == 0:
+                        continue
+
+                    x_min, y_min, x_max, y_max = out_bboxes[0]
+                    aug_h, aug_w = augmented.shape[:2]
+
+                    bbox_w = x_max - x_min
+                    bbox_h = y_max - y_min
+                    bbox_x = x_min
+                    bbox_y = y_min
+
+                    # Normalize to YOLO format
+                    yolo_x_center = (bbox_x + bbox_w / 2) / aug_w
+                    yolo_y_center = (bbox_y + bbox_h / 2) / aug_h
+                    yolo_w = bbox_w / aug_w
+                    yolo_h = bbox_h / aug_h
+
+                    yolo_str = f"0 {yolo_x_center:.6f} {yolo_y_center:.6f} {yolo_w:.6f} {yolo_h:.6f}"
+
+                    filename = f"{tool_name}_{stem}_on_{bg_stem}_{saved_count:03d}.jpg"
+                    out_path = images_dir / filename
+                    cv2.imwrite(str(out_path), augmented)
+                    print(f"    [{saved_count+1}/{num_images_per_bg}] Saved {filename}")
+
+                    # Save YOLO format txt file
+                    txt_filename = f"{tool_name}_{stem}_on_{bg_stem}_{saved_count:03d}.txt"
+                    txt_path = labels_dir / txt_filename
+                    with open(txt_path, "w") as f:
+                        f.write(yolo_str)
+
+                    # Store annotation
+                    all_annotations.append({
+                        "image": filename,
+                        "tool_type": tool_name,
+                        "source_image": fg_path.name,
+                        "background": bg_stem,
+                        "bbox": {
+                            "x": bbox_x,
+                            "y": bbox_y,
+                            "width": bbox_w,
+                            "height": bbox_h,
+                            "x_min": bbox_x,
+                            "y_min": bbox_y,
+                            "x_max": x_max,
+                            "y_max": y_max,
+                            "img_h": aug_h,
+                            "img_w": aug_w,
+                            "yolo_format": yolo_str,
+                        },
+                    })
+                    
+                    saved_count += 1
+                
+                if saved_count < num_images_per_bg:
+                    print(f"  Warning: Only generated {saved_count}/{num_images_per_bg} images for {bg_stem}")
 
     # Save all annotations to JSON
     annotations_path = outputs_dir / "annotations.json"
     with open(annotations_path, "w") as f:
         json.dump(all_annotations, f, indent=2)
-    print(f"\n{'='*60}")
-    print(f"All annotations saved to {annotations_path}")
-    print(f"Total images generated: {len(all_annotations)}")
-    print(f"{'='*60}")
+    print(f"\n{'#'*60}")
+    print(f"# ALL TOOLS PROCESSED SUCCESSFULLY")
+    print(f"# Output directory: {outputs_dir}")
+    print(f"# All annotations saved to {annotations_path}")
+    print(f"# Total images generated: {len(all_annotations)}")
+    print(f"{'#'*60}")
 
 
 if __name__ == "__main__":
