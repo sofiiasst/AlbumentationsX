@@ -57,7 +57,7 @@ def paste_foreground(fg_rgba: np.ndarray, bg_bgr: np.ndarray, tool_bbox: dict, r
             }
     
     # Randomly scale foreground relative to background width
-    scale = random.uniform(0.15, 0.30)
+    scale = random.uniform(0.10, 0.20)
     new_w = max(1, int(bg_bgr.shape[1] * scale))
     new_h = max(1, int(fg_rgba.shape[0] * new_w / fg_rgba.shape[1]))
     
@@ -96,11 +96,11 @@ def paste_foreground(fg_rgba: np.ndarray, bg_bgr: np.ndarray, tool_bbox: dict, r
     # Get final image dimensions (BEFORE augmentation)
     img_h, img_w = bg_bgr.shape[:2]
 
-    # Skip if bbox is outside realistic bounds (3%-20% of image area)
+    # Skip if bbox is outside realistic bounds (1%-15% of image area)
     img_area = img_h * img_w
     bbox_area = bbox_w * bbox_h
     bbox_ratio = bbox_area / img_area
-    if bbox_ratio < 0.03 or bbox_ratio > 0.20:
+    if bbox_ratio < 0.01 or bbox_ratio > 0.15:
         return None, None
     
     # Tool must be grounded (bbox within the bottom 75% of the image)
@@ -181,11 +181,16 @@ def main():
     outputs_dir = outputs_base / f"run_{run_num}"
     outputs_dir.mkdir(parents=True, exist_ok=True)
     
-    # Create images and labels subdirectories
-    images_dir = outputs_dir / "images"
-    labels_dir = outputs_dir / "labels"
-    images_dir.mkdir(exist_ok=True)
-    labels_dir.mkdir(exist_ok=True)
+    # Create train/val/test split directories for images and labels
+    splits = ['train', 'val', 'test']
+    images_dirs = {}
+    labels_dirs = {}
+    
+    for split in splits:
+        images_dirs[split] = outputs_dir / "images" / split
+        labels_dirs[split] = outputs_dir / "labels" / split
+        images_dirs[split].mkdir(parents=True, exist_ok=True)
+        labels_dirs[split].mkdir(parents=True, exist_ok=True)
 
     # Save annotations list
     all_annotations = []
@@ -285,20 +290,31 @@ def main():
 
                     yolo_str = f"0 {yolo_x_center:.6f} {yolo_y_center:.6f} {yolo_w:.6f} {yolo_h:.6f}"
 
+                    # Determine split using modulo for proportional distribution
+                    # This ensures 80%/10%/10% split regardless of total count
+                    mod = saved_count % 10
+                    if mod < 8:  # 0-7: 80%
+                        split = 'train'
+                    elif mod == 8:  # 10%
+                        split = 'val'
+                    else:  # mod == 9: 10%
+                        split = 'test'
+                    
                     filename = f"{tool_name}_{stem}_on_{bg_stem}_{saved_count:03d}.jpg"
-                    out_path = images_dir / filename
+                    out_path = images_dirs[split] / filename
                     cv2.imwrite(str(out_path), augmented)
-                    print(f"    [{saved_count+1}/{num_images_per_bg}] Saved {filename}")
+                    print(f"    [{saved_count+1}/{num_images_per_bg}] [{split.upper()}] Saved {filename}")
 
                     # Save YOLO format txt file
                     txt_filename = f"{tool_name}_{stem}_on_{bg_stem}_{saved_count:03d}.txt"
-                    txt_path = labels_dir / txt_filename
+                    txt_path = labels_dirs[split] / txt_filename
                     with open(txt_path, "w") as f:
                         f.write(yolo_str)
 
                     # Store annotation
                     all_annotations.append({
                         "image": filename,
+                        "split": split,
                         "tool_type": tool_name,
                         "source_image": fg_path.name,
                         "background": bg_stem,
@@ -326,11 +342,20 @@ def main():
     annotations_path = outputs_dir / "annotations.json"
     with open(annotations_path, "w") as f:
         json.dump(all_annotations, f, indent=2)
+    
+    # Calculate split statistics
+    train_count = sum(1 for a in all_annotations if a['split'] == 'train')
+    val_count = sum(1 for a in all_annotations if a['split'] == 'val')
+    test_count = sum(1 for a in all_annotations if a['split'] == 'test')
+    
     print(f"\n{'#'*60}")
     print(f"# ALL TOOLS PROCESSED SUCCESSFULLY")
     print(f"# Output directory: {outputs_dir}")
     print(f"# All annotations saved to {annotations_path}")
     print(f"# Total images generated: {len(all_annotations)}")
+    print(f"#   - Train: {train_count} ({train_count/len(all_annotations)*100:.1f}%)")
+    print(f"#   - Val:   {val_count} ({val_count/len(all_annotations)*100:.1f}%)")
+    print(f"#   - Test:  {test_count} ({test_count/len(all_annotations)*100:.1f}%)")
     print(f"{'#'*60}")
 
 
