@@ -7,6 +7,19 @@ import cv2
 import numpy as np
 
 
+# Define size thresholds for each tool type (as percentage of background width)
+TOOL_SIZE_THRESHOLDS = {
+    "hammer": (0.20, 0.30),    
+    "drill": (0.3, 0.4),     
+    "knife": (0.05, 0.15),     
+    "saw": (0.12, 0.30),       
+    "wrench": (0.10, 0.20),   
+}
+
+# Default threshold for unknown tools
+DEFAULT_TOOL_THRESHOLD = (0.10, 0.20)
+
+
 def find_images(base_path: Path) -> list[Path]:
     """Return all background images in the directory."""
     extensions = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
@@ -28,8 +41,22 @@ def load_foreground(path: Path) -> np.ndarray:
     return fg
 
 
-def paste_foreground(fg_rgba: np.ndarray, bg_bgr: np.ndarray, tool_bbox: dict, rotate_tool: bool = True) -> tuple:
-    """Paste foreground on background and return composited image + transformed bbox."""
+def paste_foreground(
+    fg_rgba: np.ndarray,
+    bg_bgr: np.ndarray,
+    tool_bbox: dict,
+    tool_type: str = "unknown",
+    rotate_tool: bool = True
+) -> tuple:
+    """Paste foreground on background and return composited image + transformed bbox.
+    
+    Args:
+        fg_rgba: Foreground image with alpha channel
+        bg_bgr: Background image in BGR format
+        tool_bbox: Bounding box of the tool
+        tool_type: Type of tool (drill, hammer, knife, saw, wrench) - used to determine size threshold
+        rotate_tool: Whether to rotate the tool
+    """
     
     # Optional: rotate the tool before pasting
     if rotate_tool:
@@ -56,8 +83,12 @@ def paste_foreground(fg_rgba: np.ndarray, bg_bgr: np.ndarray, tool_bbox: dict, r
                 "height": float(bbox_h),
             }
     
-    # Randomly scale foreground relative to background width
-    scale = random.uniform(0.10, 0.20)
+    # Get size threshold for this tool type
+    tool_type_lower = tool_type.lower()
+    size_range = TOOL_SIZE_THRESHOLDS.get(tool_type_lower, DEFAULT_TOOL_THRESHOLD)
+    
+    # Randomly scale foreground relative to background width using tool-specific threshold
+    scale = random.uniform(size_range[0], size_range[1])
     new_w = max(1, int(bg_bgr.shape[1] * scale))
     new_h = max(1, int(fg_rgba.shape[0] * new_w / fg_rgba.shape[1]))
     
@@ -258,7 +289,7 @@ def main():
                 while saved_count < num_images_per_bg and attempts < max_attempts:
                     attempts += 1
                     bg_bgr_copy = bg_bgr.copy()
-                    composed, bbox = paste_foreground(fg_rgba, bg_bgr_copy, tool_bbox)
+                    composed, bbox = paste_foreground(fg_rgba, bg_bgr_copy, tool_bbox, tool_type=tool_name)
                     
                     if composed is None:
                         continue
