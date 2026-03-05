@@ -9,15 +9,77 @@ import numpy as np
 
 # Define size thresholds for each tool type (as percentage of background width)
 TOOL_SIZE_THRESHOLDS = {
-    "hammer": (0.20, 0.30),    
-    "drill": (0.3, 0.4),     
-    "knife": (0.05, 0.15),     
-    "saw": (0.12, 0.30),       
-    "wrench": (0.10, 0.20),   
+    "cone": (0.12, 0.17),
+    "drill": (0.20, 0.30),
+    "float": (0.13, 0.20),
+    "grinder": (0.25, 0.35),
+    "hammer": (0.20, 0.26),
+    "knife": (0.05, 0.15),
+    "nailgun": (0.15, 0.25),
+    "paint_brush": (0.08, 0.15),
+    "pry_bar": (0.15, 0.25),
+    "saw": (0.15, 0.30),
+    "spirit_level": (0.20, 0.32),
+    "tackles": (0.07, 0.13),
+    "tape": (0.08, 0.20),
+    "trowel": (0.15, 0.2),
+    "wranch": (0.10, 0.17),
 }
 
 # Default threshold for unknown tools
 DEFAULT_TOOL_THRESHOLD = (0.10, 0.20)
+
+# Custom size thresholds for specific tool images (tool_name_image_number -> new_threshold)
+CUSTOM_IMAGE_THRESHOLDS = {
+    "grinder_5": (0.10, 0.15),     
+    "grinder_7": (0.17, 0.24),      
+    "drill_6": (0.15, 0.20),   
+    "drill_1": (0,20, 0.50),     
+    "paint_brush_2": (0.05, 0.12),  
+    "saw_6": (0.12, 0.17),   
+    "wranch_4": (0.08, 0.13),     
+}
+
+# Custom preprocessing for specific images (tool_name_image_number -> transformation function)
+def vertical_flip_image(image):
+    """Flip image vertically"""
+    return cv2.flip(image, 0)
+
+CUSTOM_IMAGE_PREPROCESSING = {
+    "drill_5": vertical_flip_image,  # Flip upside down image
+}
+
+# Background-specific placement constraints
+# Define forbidden regions as (x_min_ratio, y_min_ratio, x_max_ratio, y_max_ratio)
+# Ratios are relative to image dimensions (0.0 to 1.0)
+BACKGROUND_PLACEMENT_CONSTRAINTS = {
+    "background_5": {
+        "forbidden_regions": [
+            (0.0, 0.33, 0.5, 0.66),  # Sektor 4: Middle-left (left 50%, middle 33%)
+        ]
+    }
+}
+
+
+def bbox_overlaps_forbidden_region(
+    x_min_norm: float,
+    y_min_norm: float,
+    x_max_norm: float,
+    y_max_norm: float,
+    bg_name: str,
+) -> bool:
+    """Return True if bbox overlaps any forbidden region for the given background."""
+    if bg_name not in BACKGROUND_PLACEMENT_CONSTRAINTS:
+        return False
+
+    forbidden_regions = BACKGROUND_PLACEMENT_CONSTRAINTS[bg_name].get("forbidden_regions", [])
+    for rx_min, ry_min, rx_max, ry_max in forbidden_regions:
+        # Axis-aligned rectangle intersection in normalized coordinates.
+        intersects_x = x_min_norm < rx_max and x_max_norm > rx_min
+        intersects_y = y_min_norm < ry_max and y_max_norm > ry_min
+        if intersects_x and intersects_y:
+            return True
+    return False
 
 
 def find_images(base_path: Path) -> list[Path]:
@@ -46,7 +108,9 @@ def paste_foreground(
     bg_bgr: np.ndarray,
     tool_bbox: dict,
     tool_type: str = "unknown",
-    rotate_tool: bool = True
+    rotate_tool: bool = True,
+    custom_threshold: tuple = None,
+    bg_name: str = None
 ) -> tuple:
     """Paste foreground on background and return composited image + transformed bbox.
     
@@ -56,36 +120,68 @@ def paste_foreground(
         tool_bbox: Bounding box of the tool
         tool_type: Type of tool (drill, hammer, knife, saw, wrench) - used to determine size threshold
         rotate_tool: Whether to rotate the tool
+        custom_threshold: Custom size threshold (min, max) to override default
+        bg_name: Background name for applying placement constraints
     """
     
-    # Optional: rotate the tool before pasting
+    # Optional: rotate the tool before pasting with constraint on bbox fitting within the tool image
     if rotate_tool:
-        fg_rgba = A.Rotate(
-            limit=25,
-            border_mode=cv2.BORDER_CONSTANT,
-            p=1.0
-        )(image=fg_rgba)["image"]
+        rotation_angle = 20
+        current_fg = fg_rgba.copy()
+        scale_factor = 1.0
+        scale_step = 0.9  # Reduce tool size by 10% each iteration
+        max_iterations = 10
+        iteration = 0
         
-        # Compute bbox from actual opaque pixels (threshold alpha > 128 to ignore semi-transparent edges)
-        alpha_channel = fg_rgba[:, :, 3]
-        _, alpha_mask = cv2.threshold(alpha_channel, 128, 255, cv2.THRESH_BINARY)
-        coords = cv2.findNonZero(alpha_mask)
+        computed_bbox = None
         
-        if coords is not None:
-            x_min, y_min, bbox_w, bbox_h = cv2.boundingRect(coords)
-            x_max = x_min + bbox_w
-            y_max = y_min + bbox_h
+        while iteration < max_iterations:
+            iteration += 1
             
-            tool_bbox = {
-                "x": float(x_min),
-                "y": float(y_min),
-                "width": float(bbox_w),
-                "height": float(bbox_h),
-            }
+            # Rotate the current tool
+            rotated_fg = A.Rotate(
+                limit=rotation_angle,
+                border_mode=cv2.BORDER_CONSTANT,
+                p=1.0
+            )(image=current_fg)["image"]
+            
+            # Compute bbox from actual opaque pixels (threshold alpha > 128 to ignore semi-transparent edges)
+            alpha_channel = rotated_fg[:, :, 3]
+            _, alpha_mask = cv2.threshold(alpha_channel, 128, 255, cv2.THRESH_BINARY)
+            coords = cv2.findNonZero(alpha_mask)
+            
+            if coords is not None:
+                x_min, y_min, bbox_w, bbox_h = cv2.boundingRect(coords)
+                rotated_h, rotated_w = rotated_fg.shape[:2]
+                
+                # Check if bbox fits within the rotated image
+                if bbox_w <= rotated_w and bbox_h <= rotated_h:
+                    computed_bbox = {
+                        "x": float(x_min),
+                        "y": float(y_min),
+                        "width": float(bbox_w),
+                        "height": float(bbox_h),
+                    }
+                    fg_rgba = rotated_fg
+                    break
+            
+            # If bbox doesn't fit, scale down the tool and try again with same rotation
+            scale_factor *= scale_step
+            new_w = max(10, int(fg_rgba.shape[1] * scale_factor))
+            new_h = max(10, int(fg_rgba.shape[0] * scale_factor))
+            
+            current_fg = cv2.resize(fg_rgba, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        
+        # If valid bbox found, update tool_bbox
+        if computed_bbox is not None:
+            tool_bbox = computed_bbox
     
-    # Get size threshold for this tool type
-    tool_type_lower = tool_type.lower()
-    size_range = TOOL_SIZE_THRESHOLDS.get(tool_type_lower, DEFAULT_TOOL_THRESHOLD)
+    # Get size threshold for this tool type (use custom if provided)
+    if custom_threshold is not None:
+        size_range = custom_threshold
+    else:
+        tool_type_lower = tool_type.lower()
+        size_range = TOOL_SIZE_THRESHOLDS.get(tool_type_lower, DEFAULT_TOOL_THRESHOLD)
     
     # Randomly scale foreground relative to background width using tool-specific threshold
     scale = random.uniform(size_range[0], size_range[1])
@@ -112,6 +208,23 @@ def paste_foreground(
         return None, None  # Skip this image instead of raising error
     x = random.randint(0, max_x)
     y = random.randint(0, max_y)
+
+    # Check background-specific placement constraints
+    if bg_name and bg_name in BACKGROUND_PLACEMENT_CONSTRAINTS:
+        constraints = BACKGROUND_PLACEMENT_CONSTRAINTS[bg_name]
+        if "forbidden_regions" in constraints:
+            img_h, img_w = bg_bgr.shape[:2]
+            
+            # Calculate tool center position (normalized)
+            tool_center_x = (x + new_w / 2) / img_w
+            tool_center_y = (y + new_h / 2) / img_h
+            
+            # Check if tool center falls in any forbidden region
+            for region in constraints["forbidden_regions"]:
+                x_min_r, y_min_r, x_max_r, y_max_r = region
+                if (x_min_r <= tool_center_x <= x_max_r and 
+                    y_min_r <= tool_center_y <= y_max_r):
+                    return None, None  # Tool placement in forbidden region, skip
 
     roi = bg_bgr[y : y + new_h, x : x + new_w].astype(float)
     blended = roi * (1.0 - alpha_3) + fg_bgr * alpha_3
@@ -194,8 +307,7 @@ def main():
     transform = A.Compose(
         [
             A.RandomBrightnessContrast(brightness_limit=0.08, contrast_limit=0.15, p=0.4),
-            A.RandomShadow(shadow_roi=(0.2, 0.7, 0.8, 1), num_shadows_limit=(1, 2), p=0.3), #(x_min, y_min, x_max, y_max)
-            A.GaussianBlur(blur_limit=(3, 5), p=0.2),
+            A.GaussianBlur(blur_limit=(3, 5), p=0.3),
             A.HorizontalFlip(p=0.5),
         ],
         bbox_params=A.BboxParams(format="pascal_voc", label_fields=["class_labels"], min_visibility=0.3),
@@ -279,6 +391,18 @@ def main():
             
             fg_rgba = load_foreground(fg_path)
             
+            # Apply custom preprocessing if defined for this image
+            image_key = f"{tool_name}_{stem}"
+            if image_key in CUSTOM_IMAGE_PREPROCESSING:
+                preprocessing_fn = CUSTOM_IMAGE_PREPROCESSING[image_key]
+                fg_rgba = preprocessing_fn(fg_rgba)
+                print(f"Applied custom preprocessing for {image_key}")
+            
+            # Check for custom threshold for this image
+            custom_threshold = CUSTOM_IMAGE_THRESHOLDS.get(image_key, None)
+            if custom_threshold:
+                print(f"Using custom threshold for {image_key}: {custom_threshold}")
+            
             # Generate images for each background
             for bg_stem, bg_bgr in backgrounds.items():
                 num_images_per_bg = 20
@@ -289,7 +413,14 @@ def main():
                 while saved_count < num_images_per_bg and attempts < max_attempts:
                     attempts += 1
                     bg_bgr_copy = bg_bgr.copy()
-                    composed, bbox = paste_foreground(fg_rgba, bg_bgr_copy, tool_bbox, tool_type=tool_name)
+                    composed, bbox = paste_foreground(
+                        fg_rgba, 
+                        bg_bgr_copy, 
+                        tool_bbox, 
+                        tool_type=tool_name, 
+                        custom_threshold=custom_threshold,
+                        bg_name=bg_stem
+                    )
                     
                     if composed is None:
                         continue
@@ -307,6 +438,20 @@ def main():
 
                     x_min, y_min, x_max, y_max = out_bboxes[0]
                     aug_h, aug_w = augmented.shape[:2]
+
+                    # Enforce constraints on final bbox (after augmentation/flip).
+                    x_min_norm = x_min / aug_w
+                    y_min_norm = y_min / aug_h
+                    x_max_norm = x_max / aug_w
+                    y_max_norm = y_max / aug_h
+                    if bbox_overlaps_forbidden_region(
+                        x_min_norm,
+                        y_min_norm,
+                        x_max_norm,
+                        y_max_norm,
+                        bg_stem,
+                    ):
+                        continue
 
                     bbox_w = x_max - x_min
                     bbox_h = y_max - y_min
